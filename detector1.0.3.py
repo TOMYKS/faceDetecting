@@ -24,7 +24,7 @@ results_lock = threading.Lock()
 face_results = []  # Will hold tuples: (top, right, bottom, left, name)
 
 # Face size thresholds
-MIN_FACE_SIZE = 140
+MIN_FACE_SIZE = 100
 MAX_FACE_SIZE = 240
 
 def process_faces(rgb_frame):
@@ -62,11 +62,11 @@ def process_faces(rgb_frame):
 
 # Initialize camera
 video_capture = cv2.VideoCapture(0)
-executor = ThreadPoolExecutor(max_workers=1)
+executor = ThreadPoolExecutor(max_workers=2)
 
 # Frame skipping logic
 frame_count = 0
-PROCESS_EVERY_N_FRAMES = 2
+PROCESS_EVERY_N_FRAMES = 10
 processing_thread = None
 
 while True:

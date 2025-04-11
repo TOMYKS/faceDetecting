@@ -141,14 +141,16 @@ try:
 
                 if elapsed >= ACCESS_DELAY:
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    face_image = frame[top:bottom, left:right]
+
                     if name == "Desconocido":
                         filename = f"unknown_attempt{unknown_attempt_count}_{timestamp}.jpg"
-                        cv2.imwrite(os.path.join("failed_access", filename), frame)
+                        cv2.imwrite(os.path.join("failed_access", filename), face_image)
                         unknown_attempt_count += 1
                         flash_color = (0, 0, 255)  # Red
                     else:
                         filename = f"{name}_access_{timestamp}.jpg"
-                        cv2.imwrite(os.path.join("successful_access", filename), frame)
+                        cv2.imwrite(os.path.join("successful_access", filename), face_image)
                         flash_color = (0, 255, 0)  # Green
 
                     flash_end_time = datetime.now().timestamp() + 1
@@ -178,3 +180,4 @@ finally:
     cv2.destroyAllWindows()
     for _ in range(2):
         frame_queue.put(None)
+

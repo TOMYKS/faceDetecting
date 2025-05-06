@@ -19,12 +19,12 @@ import uuid
 
 # === Configuration ===
 ENCODINGS_DIR = "encodings"
-MIN_FACE_SIZE = 110
-MAX_FACE_SIZE = 240
+MIN_FACE_SIZE = 100
+MAX_FACE_SIZE = 250
 FRAME_QUEUE_SIZE = 1
 CONFIDENCE_THRESHOLD = 50.0
 ACCESS_DELAY = 3.5  # seconds
-MOVEMENT_THRESHOLD = 20  # pixels of movement allowed
+MOVEMENT_THRESHOLD = 30  # pixels of movement allowed
 
 # === Load Known Encodings ===
 known_face_encodings = []
@@ -126,7 +126,7 @@ for _ in range(2):
     threading.Thread(target=process_faces_worker, daemon=True).start()
 
 # === Main Loop ===
-video_capture = cv2.VideoCapture(1)
+video_capture = cv2.VideoCapture(0)
 
 current_identity = None
 timer_start = None
@@ -177,7 +177,7 @@ try:
                 previous_face_location = (top, right, bottom, left)
 
                 countdown = max(0, int(ACCESS_DELAY - elapsed))
-                cv2.putText(display_frame, f"ABER KIETO: {countdown}s", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.3, (0, 100, 255), 4)
+                cv2.putText(display_frame, f"Quedese quieto: {countdown}s", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.3, (0, 100, 255), 4)
 
                 if elapsed >= ACCESS_DELAY:
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

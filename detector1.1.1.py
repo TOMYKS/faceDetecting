@@ -11,11 +11,8 @@ import ssl
 import json
 import uuid
 
-# import RPi.GPIO as GPIO  
-
-# GPIO.setmode(GPIO.BCM)
-# GPIO.setup(21, GPIO.IN) # --> Configuracion de pines de la raspi que sera usada mas adelante
-
+import RPi.GPIO as GPIO
+from mfrc522 import SimpleMFRC522
 
 # === Configuration ===
 ENCODINGS_DIR = "encodings"
@@ -41,23 +38,17 @@ frame_queue = Queue(maxsize=FRAME_QUEUE_SIZE)
 results_lock = threading.Lock()
 face_results = []
 
-# === Conexion MQTT ===
-def on_connect(client, userdata, flags, rc):
-    print("Connected with result code "+str(rc))
-
-
+# === MQTT Client (Global) ===
 client = mqtt.Client()
-client.on_connect = on_connect
 client.tls_set(
-                ca_certs='./rootCA.pem',
-                certfile='./15c844b65460806857f2d3c466ee872234ea4f93da54c35a2eecc62e513e546a-certificate.pem.crt',
-                keyfile='./15c844b65460806857f2d3c466ee872234ea4f93da54c35a2eecc62e513e546a-private.pem.key',
-                tls_version=ssl.PROTOCOL_TLSv1_2
-                )
+    ca_certs='./rootCA.pem',
+    certfile='./15c844b65460806857f2d3c466ee872234ea4f93da54c35a2eecc62e513e546a-certificate.pem.crt',
+    keyfile='./15c844b65460806857f2d3c466ee872234ea4f93da54c35a2eecc62e513e546a-private.pem.key',
+    tls_version=ssl.PROTOCOL_TLSv1_2
+)
 client.tls_insecure_set(True)
 client.connect("a1alx9n5p596ib-ats.iot.us-east-2.amazonaws.com", 8883, 60)
 
-# === Funcion de publicar logs ===
 def send_access_log(name, last_name, result):
     payload = {
         "logID": str(uuid.uuid4()),
@@ -67,7 +58,7 @@ def send_access_log(name, last_name, result):
         "name": name,
         "result": result,
         "timestamp": int(time.time())
-        }
+    }
     client.publish("building/door/access", json.dumps(payload))
 
 # === Face Recognition Worker ===
@@ -121,19 +112,59 @@ def process_faces_worker():
         with results_lock:
             face_results = local_results
 
+# === RFID Worker ===
+def rfid_worker():
+    reader = SimpleMFRC522()
+    while True:
+        try:
+            tag_id, _ = reader.read()
+            tag_id = str(tag_id).strip()
+
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            rfid_file = os.path.join("Rfid", f"{tag_id}.txt")
+
+            if os.path.exists(rfid_file):
+                print("Acceso garantizado (RFID)")
+                send_access_log(name="RFID", last_name=tag_id, result="Success")
+                with open(os.path.join("successful_access", f"{tag_id}_{timestamp}.txt"), "w") as f:
+                    f.write(f"RFID: {tag_id}, Timestamp: {timestamp}")
+                set_flash_color((0, 255, 0))
+            else:
+                print("Acceso denegado (RFID)")
+                with open(os.path.join("failed_access_rfid", f"{tag_id}_{timestamp}.txt"), "w") as f:
+                    f.write(f"Invalid RFID Attempt: {tag_id} at {timestamp}")
+                send_access_log(name="RFID", last_name=tag_id, result="Failure")
+                set_flash_color((0, 0, 255))
+
+            time.sleep(0.5)  # avoid rapid retries
+
+        except Exception as e:
+            print("RFID read error:", e)
+            time.sleep(1)
+
+# === Flash Color Management ===
+flash_color = None
+flash_end_time = 0
+flash_lock = threading.Lock()
+
+def set_flash_color(color, duration=1.0):
+    global flash_color, flash_end_time
+    with flash_lock:
+        flash_color = color
+        flash_end_time = time.time() + duration
+
 # === Start Worker Threads ===
 for _ in range(2):
     threading.Thread(target=process_faces_worker, daemon=True).start()
 
-# === Main Loop ===
-video_capture = cv2.VideoCapture(0)
+threading.Thread(target=rfid_worker, daemon=True).start()
 
+# === Main Camera Loop ===
+video_capture = cv2.VideoCapture(0)
 current_identity = None
 timer_start = None
 previous_face_location = None
 unknown_attempt_count = 0
-flash_color = None
-flash_end_time = 0
 
 try:
     while True:
@@ -168,8 +199,6 @@ try:
                 now = datetime.now()
                 elapsed = (now - timer_start).total_seconds()
 
-                # Check movement
-                top0, right0, bottom0, left0 = previous_face_location
                 move = any(abs(n - o) > MOVEMENT_THRESHOLD for n, o in zip((top, right, bottom, left), previous_face_location))
                 if move:
                     timer_start = now
@@ -187,14 +216,14 @@ try:
                         filename = f"unknown_attempt{unknown_attempt_count}_{timestamp}.jpg"
                         cv2.imwrite(os.path.join("failed_access", filename), face_image)
                         unknown_attempt_count += 1
-                        flash_color = (0, 0, 255)  # Red
-                        
+                        set_flash_color((0, 0, 255))
                         send_access_log(name="Unknown", last_name="Unknown", result="Failure")
                     else:
                         filename = f"{name}_access_{timestamp}.jpg"
                         cv2.imwrite(os.path.join("successful_access", filename), face_image)
-                        flash_color = (0, 255, 0)  # Green
-                        
+                        set_flash_color((0, 255, 0))
+                        print("Acceso garantizado (Facial)")
+
                         try:
                             name_parts = name.split("_")
                             if len(name_parts) == 1:
@@ -203,13 +232,12 @@ try:
                             else:
                                 first_name = " ".join(name_parts[:-1])
                                 last_name = name_parts[-1]
-                        except Exception as e:
+                        except:
                             first_name = name
                             last_name = ""
-                            
+
                         send_access_log(name=first_name, last_name=last_name, result="Success")
 
-                    flash_end_time = datetime.now().timestamp() + 1
                     current_identity = None
                     timer_start = None
                     previous_face_location = None
@@ -219,15 +247,16 @@ try:
             timer_start = None
             previous_face_location = None
 
-        # === Flash effect ===
-        if flash_color and datetime.now().timestamp() < flash_end_time:
-            overlay = display_frame.copy()
-            cv2.rectangle(overlay, (0, 0), (display_frame.shape[1], display_frame.shape[0]), flash_color, -1)
-            cv2.addWeighted(overlay, 0.7, display_frame, 0.3, 0, display_frame)
-        else:
-            flash_color = None
+        # Flash
+        with flash_lock:
+            if flash_color and time.time() < flash_end_time:
+                overlay = display_frame.copy()
+                cv2.rectangle(overlay, (0, 0), (display_frame.shape[1], display_frame.shape[0]), flash_color, -1)
+                cv2.addWeighted(overlay, 0.7, display_frame, 0.3, 0, display_frame)
+            elif flash_color:
+                flash_color = None
 
-        cv2.imshow("Face Recognition", display_frame)
+        cv2.imshow("Face & RFID Access System", display_frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
@@ -236,4 +265,5 @@ finally:
     cv2.destroyAllWindows()
     for _ in range(2):
         frame_queue.put(None)
+    GPIO.cleanup()
 

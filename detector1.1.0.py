@@ -5,15 +5,26 @@ import os
 import threading
 from queue import Queue
 from datetime import datetime
+import time
+import paho.mqtt.client as mqtt
+import ssl
+import json
+import uuid
+
+# import RPi.GPIO as GPIO  
+
+# GPIO.setmode(GPIO.BCM)
+# GPIO.setup(21, GPIO.IN) # --> Configuracion de pines de la raspi que sera usada mas adelante
+
 
 # === Configuration ===
 ENCODINGS_DIR = "encodings"
-MIN_FACE_SIZE = 110
-MAX_FACE_SIZE = 240
+MIN_FACE_SIZE = 100
+MAX_FACE_SIZE = 250
 FRAME_QUEUE_SIZE = 1
-CONFIDENCE_THRESHOLD = 55.0
+CONFIDENCE_THRESHOLD = 50.0
 ACCESS_DELAY = 3.5  # seconds
-MOVEMENT_THRESHOLD = 20  # pixels of movement allowed
+MOVEMENT_THRESHOLD = 30  # pixels of movement allowed
 
 # === Load Known Encodings ===
 known_face_encodings = []
@@ -29,6 +40,35 @@ for filename in os.listdir(ENCODINGS_DIR):
 frame_queue = Queue(maxsize=FRAME_QUEUE_SIZE)
 results_lock = threading.Lock()
 face_results = []
+
+# === Conexion MQTT ===
+def on_connect(client, userdata, flags, rc):
+    print("Connected with result code "+str(rc))
+
+
+client = mqtt.Client()
+client.on_connect = on_connect
+client.tls_set(
+                ca_certs='./rootCA.pem',
+                certfile='./15c844b65460806857f2d3c466ee872234ea4f93da54c35a2eecc62e513e546a-certificate.pem.crt',
+                keyfile='./15c844b65460806857f2d3c466ee872234ea4f93da54c35a2eecc62e513e546a-private.pem.key',
+                tls_version=ssl.PROTOCOL_TLSv1_2
+                )
+client.tls_insecure_set(True)
+client.connect("a1alx9n5p596ib-ats.iot.us-east-2.amazonaws.com", 8883, 60)
+
+# === Funcion de publicar logs ===
+def send_access_log(name, last_name, result):
+    payload = {
+        "logID": str(uuid.uuid4()),
+        "building_id": 1,
+        "door_id": 1,
+        "last_name": last_name,
+        "name": name,
+        "result": result,
+        "timestamp": int(time.time())
+        }
+    client.publish("building/door/access", json.dumps(payload))
 
 # === Face Recognition Worker ===
 def process_faces_worker():
@@ -137,7 +177,7 @@ try:
                 previous_face_location = (top, right, bottom, left)
 
                 countdown = max(0, int(ACCESS_DELAY - elapsed))
-                cv2.putText(display_frame, f"Hold still: {countdown}s", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.3, (0, 100, 255), 4)
+                cv2.putText(display_frame, f"Quedese quieto: {countdown}s", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.3, (0, 100, 255), 4)
 
                 if elapsed >= ACCESS_DELAY:
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -148,10 +188,26 @@ try:
                         cv2.imwrite(os.path.join("failed_access", filename), face_image)
                         unknown_attempt_count += 1
                         flash_color = (0, 0, 255)  # Red
+                        
+                        send_access_log(name="Unknown", last_name="Unknown", result="Failure")
                     else:
                         filename = f"{name}_access_{timestamp}.jpg"
                         cv2.imwrite(os.path.join("successful_access", filename), face_image)
                         flash_color = (0, 255, 0)  # Green
+                        
+                        try:
+                            name_parts = name.split("_")
+                            if len(name_parts) == 1:
+                                first_name = name_parts[0]
+                                last_name = ""
+                            else:
+                                first_name = " ".join(name_parts[:-1])
+                                last_name = name_parts[-1]
+                        except Exception as e:
+                            first_name = name
+                            last_name = ""
+                            
+                        send_access_log(name=first_name, last_name=last_name, result="Success")
 
                     flash_end_time = datetime.now().timestamp() + 1
                     current_identity = None
@@ -180,4 +236,3 @@ finally:
     cv2.destroyAllWindows()
     for _ in range(2):
         frame_queue.put(None)
-

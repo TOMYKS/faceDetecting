@@ -1,0 +1,12 @@
+{
+  "device_id": "raspi_1",
+  "building_id": 1,
+  "door_id": 1,
+  "mqtt": {
+    "broker": "a1alx9n5p596ib-ats.iot.us-east-2.amazonaws.com",
+    "port": 8883,
+    "ca_cert": "./rootCA.pem",
+    "certfile": "./15c844b65460806857f2d3c466ee872234ea4f93da54c35a2eecc62e513e546a-certificate.pem.crt"
+    "keyfile": "./15c844b65460806857f2d3c466ee872234ea4f93da54c35a2eecc62e513e546a-private.pem.key"
+  }
+}
